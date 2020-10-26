@@ -298,6 +298,7 @@ class ExpressionProvider(object):
         raise NotImplementedError("Subclass of ExpressionProvider must implement `Expression` method")
 
 
+
 @six.add_metaclass(abc.ABCMeta)
 class DatasetProvider(object):
     """Dataset provider class
@@ -458,6 +459,7 @@ class DatasetProvider(object):
 
         return data
 
+    
     @staticmethod
     def expression_calculator(inst, start_time, end_time, freq, column_names, spans=None, g_config=None):
         """
@@ -481,9 +483,9 @@ class DatasetProvider(object):
 
         data = pd.DataFrame(obj)
         _calendar = Cal.calendar(freq=freq)
+        
         data.index = _calendar[data.index.values.astype(np.int)]
         data.index.names = ["datetime"]
-
         if spans is None:
             return data
         else:
@@ -648,9 +650,23 @@ class LocalFeatureProvider(FeatureProvider):
             return pd.Series()
             # raise ValueError('uri_data not found: ' + uri_data)
         # load
+        #df = read_bin(uri_data, start_index, end_index).to_frame('score')
+
+        #if freq == '1min':
+        #    if getattr(Cal, '_provider', None) is None:
+        #        register_all_wrappers()
+        #    _calendar = Cal.calendar(freq=freq)
+        #    df['date'] = _calendar[df.index.values.astype(np.int)]
+        #    df.date = df.date.map(lambda x: x.date())
+        #    df.set_index('date', append=True, drop=True, inplace=True)
+        #    count = df['score'].groupby(level='date').count()
+        #    skip = count.index[count != 240]
+        #    df = df[~df.index.get_level_values('date').isin(skip)]
+        #    return df['score'].droplevel(level='date')
+        #else:
+        #    return df['score']
         series = read_bin(uri_data, start_index, end_index)
         return series
-
 
 class LocalExpressionProvider(ExpressionProvider):
     """Local expression data provider class
@@ -676,6 +692,7 @@ class LocalExpressionProvider(ExpressionProvider):
             pass
         if not series.empty:
             series = series.loc[start_index:end_index]
+        
         return series
 
 

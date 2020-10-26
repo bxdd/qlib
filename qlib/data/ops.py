@@ -8,6 +8,8 @@ from __future__ import print_function
 import numpy as np
 import pandas as pd
 
+from ..config import C
+import importlib
 from .base import Expression, ExpressionOps
 from ..log import get_module_logger
 
@@ -65,6 +67,9 @@ __all__ = (
     "IdxMax",
     "IdxMin",
     "If",
+    "DayFirst",
+    "DayLast",
+    "DayFull"
 )
 
 np.seterr(invalid="ignore")
@@ -232,6 +237,83 @@ class Not(ElemOperator):
     def __init__(self, feature):
         super(Not, self).__init__(feature, "bitwise_not")
 
+class DayFirst(ElemOperator):
+
+    def __init__(self, feature):
+        super(DayFirst, self).__init__(feature, "day_first")
+        self._calendar_provider = self._import_calendar(C.calendar_provider)()
+        if getattr(C, "calendar_cache", None) is not None:
+            self._calendar_provider = self._import_calendar(C.calendar_cache)(provider=self._calendar_provider)
+        
+        
+    def _import_calendar(self, cls_name):
+        return getattr(importlib.import_module(".data", package="qlib"), cls_name)
+
+    def _load_internal(self, instrument, start_index, end_index, freq):
+        _calendar = self._calendar_provider.calendar(freq=freq)
+        #print(_calendar)
+        #data.index = _calendar[data.index.values.astype(np.int)]
+        #data.index.names = ["datetime"]
+        df = self.feature.load(instrument, start_index, end_index, freq).to_frame('score')
+        #print(df)
+        df['date'] = _calendar[df.index.values.astype(np.int)]
+        df.date = df.date.map(lambda x: x.date())
+        df.set_index('date', append=True, drop=True, inplace=True)
+        #print(df['score'].groupby(level='date').transform('first'))
+        return df['score'].groupby(level='date').transform('first').droplevel(level='date')
+
+class DayLast(ElemOperator):
+
+    def __init__(self, feature):
+        super(DayLast, self).__init__(feature, "day_last")
+        self._calendar_provider = self._import_calendar(C.calendar_provider)()
+        if getattr(C, "calendar_cache", None) is not None:
+            self._calendar_provider = self._import_calendar(C.calendar_cache)(provider=self._calendar_provider)
+        
+        
+    def _import_calendar(self, cls_name):
+        return getattr(importlib.import_module(".data", package="qlib"), cls_name)
+
+    def _load_internal(self, instrument, start_index, end_index, freq):
+        _calendar = self._calendar_provider.calendar(freq=freq)
+        #print(_calendar)
+        #data.index = _calendar[data.index.values.astype(np.int)]
+        #data.index.names = ["datetime"]
+        df = self.feature.load(instrument, start_index, end_index, freq).to_frame('score')
+        #print(df)
+        df['date'] = _calendar[df.index.values.astype(np.int)]
+        df.date = df.date.map(lambda x: x.date())
+        df.set_index('date', append=True, drop=True, inplace=True)
+        #print(df['score'].groupby(level='date').transform('last'))
+        return df['score'].groupby(level='date').transform('last').droplevel(level='date')
+
+class DayFull(ElemOperator):
+    
+    def __init__(self, feature, count):
+        super(DayFull, self).__init__(feature, "day_full")
+        self._count = count
+        self._calendar_provider = self._import_calendar(C.calendar_provider)()
+        if getattr(C, "calendar_cache", None) is not None:
+            self._calendar_provider = self._import_calendar(C.calendar_cache)(provider=self._calendar_provider)
+        
+        
+    def _import_calendar(self, cls_name):
+        return getattr(importlib.import_module(".data", package="qlib"), cls_name)
+
+    def _load_internal(self, instrument, start_index, end_index, freq):
+        _calendar = self._calendar_provider.calendar(freq=freq)
+        #print(_calendar)
+        #data.index = _calendar[data.index.values.astype(np.int)]
+        #data.index.names = ["datetime"]
+        df = self.feature.load(instrument, start_index, end_index, freq).to_frame('score')
+        #print(df)
+        df['date'] = _calendar[df.index.values.astype(np.int)]
+        df.date = df.date.map(lambda x: x.date())
+        df.set_index('date', append=True, drop=True, inplace=True)
+        count = df['score'].groupby(level='date').count()
+        skip = count.index[count != self._count]
+        df = df[~df.index.get_level_values('date').isin(skip)]
+        return df['score'].droplevel(level='date')
 
 #################### Pair-Wise Operator ####################
 class PairOperator(ExpressionOps):
@@ -298,6 +380,10 @@ class PairOperator(ExpressionOps):
             rl, rr = 0, 0
         return max(ll, rl), max(lr, rr)
 
+
+class FillNan(PairOperator):
+    def __init__(self, feature_left, feature_right):
+        super(FillNan, self).__init__(feature_left, feature_right, "add")
 
 class Add(PairOperator):
     """Add Operator
@@ -518,6 +604,24 @@ class Eq(PairOperator):
     def __init__(self, feature_left, feature_right):
         super(Eq, self).__init__(feature_left, feature_right, "equal")
 
+    def _load_internal(self, instrument, start_index, end_index, freq):
+        assert any(
+            [isinstance(self.feature_left, Expression), self.feature_right, Expression]
+        ), "at least one of two inputs is Expression instance"
+        if isinstance(self.feature_left, Expression):
+            series_left = self.feature_left.load(instrument, start_index, end_index, freq)
+        else:
+            series_left = self.feature_left  # numeric value
+        if isinstance(self.feature_right, Expression):
+            series_right = self.feature_right.load(instrument, start_index, end_index, freq)
+        else:
+            series_right = self.feature_right
+        if series_left is np.nan:
+            return series_right.isnull()
+        elif series_right is np.nan:
+            return series_left.isnull()
+        else:
+            return getattr(np, self.func)(series_left, series_right)
 
 class Ne(PairOperator):
     """Not Equal Operator

@@ -258,7 +258,8 @@ class QLibDataHandler(BaseDataHandler):
         # Instruments
         instruments = kwargs.get("instruments", None)
         if instruments is None:
-            market = kwargs.get("market", "csi500").lower()
+            market = kwargs.get("market", "csi300").lower()
+            print(market)
             data_filter_list = kwargs.get("data_filter_list", list())
             self.instruments = D.instruments(market, filter_pipe=data_filter_list)
         else:
@@ -313,7 +314,7 @@ class QLibDataHandler(BaseDataHandler):
         df_labels.columns = label_names
 
         TimeInspector.log_cost_time("Finished loading labels.")
-
+        
         return df_labels
 
 
@@ -494,6 +495,110 @@ def parse_config_to_fields(config):
 
     return fields, names
 
+
+class QLibHighFreqDataHandler(QLibDataHandler):
+    def __init__(self, start_date, end_date, processors=None, **kwargs):
+        if processors is None:
+            processors = ["ConfigSectionProcessor"]  # default processor
+        super().__init__(start_date, end_date, processors, **kwargs)
+
+
+    def _init_kwargs(self, **kwargs):
+
+        fields = []
+        names = []
+        
+        template_full = 'DayFull(If(Eq({1}, np.nan), {0}, {1}), 240)'
+        
+
+        fields += ['{0}/Ref(DayLast({0}), 240)'.format(template_full.format('$close', '$open'))]
+        fields += ['{0}/Ref(DayLast({0}), 240)'.format(template_full.format('$close', '$high'))]
+        fields += ['{0}/Ref(DayLast({0}), 240)'.format(template_full.format('$close', '$low'))]
+        fields += ['DayFull($close, 240)/Ref(DayLast(DayFull($close, 240)), 240)']
+        fields += ['{0}/Ref(DayLast({0}), 240)'.format(template_full.format('$close', '$vwap'))]
+        names += ['$open', '$high', '$low', '$close', '$vwap']
+        fields += ['Ref({0}, 240)/Ref(DayLast({0}), 240)'.format(template_full.format('$close', '$open'))]
+        fields += ['Ref({0}, 240)/Ref(DayLast({0}), 240)'.format(template_full.format('$close', '$high'))]
+        fields += ['Ref({0}, 240)/Ref(DayLast({0}), 240)'.format(template_full.format('$close', '$low'))]
+        fields += ['Ref(DayFull($close, 240), 240)/Ref(DayLast(DayFull($close, 240)), 240)']
+        fields += ['Ref({0}, 240)/Ref(DayLast({0}), 240)'.format(template_full.format('$close', '$vwap'))]
+        names += ['$open_1', '$high_1', '$low_1', '$close_1', '$vwap_1']
+        fields += ['{0}/DayFirst(Ref(Mean({0}, 14400), -1))'.format('DayFull(If(Eq($volume, np.nan), If(Eq($close, np.nan), np.nan, 0), $volume), 240)')]
+        names += ['$volume']
+        fields += ['Ref({0}, 240)/DayFirst(Ref(Mean({0}, 14400), -1))'.format('DayFull(If(Eq($volume, np.nan), If(Eq($close, np.nan), np.nan, 0), $volume), 240)')]
+        names += ['$volume_1']
+        kwargs["fields"] = fields
+        kwargs["names"] = names
+        kwargs["labels"] = ['Ref({0}, 480)/Ref({0}, 240) - 1'.format(template_full.format('$close', '$vwap'))]
+        kwargs["label_names"] = ['LABEL']
+        super()._init_kwargs(**kwargs)
+    
+    def setup_feature(self):
+        """
+        Load the raw data.
+        return: df_features
+        """
+        TimeInspector.set_time_mark()
+        
+        if len(self._names) == 0:
+            names = ["F%d" % i for i in range(len(self._fields))]
+        else:
+            names = self._names
+
+        df_features = D.features(self.instruments, self._fields, self.start_date, self.end_date, '1min')
+        df_features.columns = names
+        
+        df_features.dropna(inplace=True)
+        df_features[['$volume', '$volume_1']] = np.log1p(df_features[['$volume', '$volume_1']])
+        med = df_features.median()
+        print("Median: ", med)
+        df_features = df_features - med # mean, copy
+        std = df_features.abs().median() * 1.4826 + 1e-12
+        print("Std: ", std)
+        df_features /= std
+        vmax = df_features.max()
+        vmin = df_features.min()
+        print("Vmax: ", vmax)
+        print("Vmin: ", vmin)
+        df_features.where(df_features <=  3,  3 + (df_features - 3).div(vmax - 3) * 0.5, inplace=True); 
+        df_features.where(df_features <= 3.5, 3.5, inplace=True)
+        df_features.where(df_features >= -3, -3 - (df_features + 3).div(vmin + 3) * 0.5, inplace=True);
+        df_features.where(df_features >= -3.5, -3.5, inplace=True)
+        
+
+        TimeInspector.log_cost_time("Finished loading features.")
+
+        print(df_features)
+        return df_features
+
+    def setup_label(self):
+        TimeInspector.set_time_mark()
+
+        if len(self._label_names) == 0:
+            label_names = ["LABEL%d" % i for i in range(len(self._labels))]
+        else:
+            label_names = self._label_names
+
+        df_labels = D.features(self.instruments, self._labels, self.start_date, self.end_date, '1min')
+        df_labels.columns = label_names
+        med = df_labels.median()
+        print("Label_Median: ", med)
+        df_labels = df_labels - med # mean, copy
+        std = df_labels.abs().median() * 1.4826 + 1e-12
+        print("Label_Std: ", std)
+        df_labels /= std
+        vmax = df_labels.max()
+        vmin = df_labels.min()
+        print("Label_Vmax: ", vmax)
+        print("Label_Vmin: ", vmin)
+        df_labels.where(df_labels <=  3,  3 + (df_labels - 3).div(vmax - 3) * 0.5, inplace=True); 
+        df_labels.where(df_labels <= 3.5, 3.5, inplace=True)
+        df_labels.where(df_labels >= -3, -3 - (df_labels + 3).div(vmin + 3) * 0.5, inplace=True);
+        df_labels.where(df_labels >= -3.5, -3.5, inplace=True)
+        TimeInspector.log_cost_time("Finished loading labels.")
+
+        print(df_labels)
+        return df_labels
 
 class ConfigQLibDataHandler(QLibDataHandler):
     config_template = {}  # template
