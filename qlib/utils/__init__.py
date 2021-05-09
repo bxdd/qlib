@@ -876,7 +876,7 @@ def parse_freq(freq):
     search_obj = re.search("^([0-9]*)([a-z]+)", freq)
     if search_obj is None:
         raise ValueError("freq format is not supported")
-    _count = int(search_obj.group(1) if search_obj.group(1) else "1")
+    _count = int(search_obj.group(1)) if search_obj.group(1) is None else 1
     _freq = search_obj.group(2)
     _freq_format_dict = {
         "month": "month",
